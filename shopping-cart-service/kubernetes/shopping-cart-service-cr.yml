@@ -10,7 +10,7 @@ metadata:
   namespace: "shopping"
 spec:
   replicas: 1
-  image: <docker-registry>/shopping-cart-service:<tag> 
+  image: shopping-cart-service:1.0.0-SNAPSHOT
   javaOptions: "-Xlog:gc -XX:InitialRAMPercentage=75 -XX:MaxRAMPercentage=75"
   resources:
     limits:
