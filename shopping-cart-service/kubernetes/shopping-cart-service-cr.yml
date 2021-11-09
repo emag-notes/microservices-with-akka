@@ -18,3 +18,5 @@ spec:
     requests:
       memory: "2Gi"
       cpu: "1"
+  jdbc:
+    credentialsSecret: shopping-cart-service-jdbc-secret
