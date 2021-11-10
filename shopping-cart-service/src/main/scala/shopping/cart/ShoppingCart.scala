@@ -15,6 +15,7 @@ import akka.persistence.typed.scaladsl.{
   RetentionCriteria
 }
 
+import java.time.Instant
 import scala.concurrent.duration.DurationInt
 
 object ShoppingCart {
@@ -36,10 +37,27 @@ object ShoppingCart {
       replyTo: ActorRef[StatusReply[Summary]])
       extends Command
 
+  final case class Checkout(replyTo: ActorRef[StatusReply[Summary]])
+      extends Command
+
+  final case class Get(replayTo: ActorRef[Summary]) extends Command
+
+  final case class RemoveItem(
+      itemId: String,
+      replyTo: ActorRef[StatusReply[Summary]])
+      extends Command
+
+  final case class AdjustItemQuantity(
+      itemId: String,
+      quantity: Int,
+      replyTo: ActorRef[StatusReply[Summary]])
+      extends Command
+
   /**
    * Summary of the shopping cart state, used in reply messages.
    */
-  final case class Summary(items: Map[String, Int]) extends CborSerializable
+  final case class Summary(items: Map[String, Int], checkedOut: Boolean)
+      extends CborSerializable
 
   /**
    * This interface defines all the events that the ShoppingCart supports.
@@ -51,7 +69,21 @@ object ShoppingCart {
   final case class ItemAdded(cartId: String, itemId: String, quantity: Int)
       extends Event
 
-  final case class State(items: Map[String, Int]) extends CborSerializable {
+  final case class CheckedOut(cartId: String, eventTime: Instant) extends Event
+
+  final case class ItemRemoved(cartId: String, itemId: String) extends Event
+
+  final case class ItemQuantityAdjusted(
+      cartId: String,
+      itemId: String,
+      quantity: Int)
+      extends Event
+
+  final case class State(items: Map[String, Int], checkoutDate: Option[Instant])
+      extends CborSerializable {
+    def isCheckedOut: Boolean = checkoutDate.isDefined
+    def checkout(now: Instant): State = copy(checkoutDate = Some(now))
+    def toSummary: Summary = Summary(items, isCheckedOut)
     def hasItem(itemId: String): Boolean = items.contains(itemId)
     def isEmpty: Boolean = items.isEmpty
     def updateItem(itemId: String, quantity: Int): State =
@@ -59,12 +91,48 @@ object ShoppingCart {
         case 0 => copy(items = items - itemId)
         case _ => copy(items = items + (itemId -> quantity))
       }
+    def removeItem(itemId: String): State = copy(items = items - itemId)
+    def adjustQuantity(itemId: String, quantity: Int): State =
+      copy(items = items.updated(itemId, quantity))
   }
   object State {
-    val empty: State = State(items = Map.empty)
+    val empty: State = State(items = Map.empty, checkoutDate = None)
   }
 
   private def handleCommand(
+      cartId: String,
+      state: State,
+      command: Command): ReplyEffect[Event, State] = {
+    // The shopping cart behavior changes if it's checked out or not.
+    // The commands are handled differently for each case.
+    if (state.isCheckedOut)
+      checkedOutShoppingCart(state, command)
+    else
+      openShoppingCart(cartId, state, command)
+  }
+
+  private def checkedOutShoppingCart(
+      state: State,
+      command: Command): ReplyEffect[Event, State] = command match {
+    case cmd: AddItem =>
+      Effect.reply(cmd.replyTo)(
+        StatusReply.Error(
+          "Can't add an item to an already checked out shopping cart"))
+    case Checkout(replyTo) =>
+      Effect.reply(replyTo)(
+        StatusReply.Error("Can't checkout already checked out shopping cart"))
+    case cmd: RemoveItem =>
+      Effect.reply(cmd.replyTo)(
+        StatusReply.Error(
+          "Can't remove an item to an already checked out shopping cart"))
+    case cmd: AdjustItemQuantity =>
+      Effect.reply(cmd.replyTo)(StatusReply.Error(
+        "Can't adjust a quantity of an item from an already checked out shopping cart"))
+    case Get(replayTo) =>
+      Effect.reply(replayTo)(state.toSummary)
+  }
+
+  private def openShoppingCart(
       cartId: String,
       state: State,
       command: Command): ReplyEffect[Event, State] = command match {
@@ -79,13 +147,57 @@ object ShoppingCart {
       else
         Effect.persist(ItemAdded(cartId, itemId, quantity)).thenReply(replyTo) {
           updatedCart =>
-            StatusReply.Success(Summary(updatedCart.items))
+            StatusReply.Success(updatedCart.toSummary)
         }
+    case Checkout(replyTo) =>
+      if (state.isEmpty)
+        Effect.reply(replyTo)(
+          StatusReply.Error("Cannot checkout an empty shopping cart"))
+      else
+        Effect
+          .persist(CheckedOut(cartId, Instant.now()))
+          .thenReply(replyTo)(updatedCart =>
+            StatusReply.Success(updatedCart.toSummary))
+    case RemoveItem(itemId, replyTo) =>
+      if (!state.hasItem(itemId))
+        Effect.reply(replyTo)(
+          StatusReply.Error(
+            "Cannot remove an item doesn't exist in this shopping cart"))
+      else
+        Effect
+          .persist(ItemRemoved(cartId = cartId, itemId = itemId))
+          .thenReply(replyTo) { updatedCart =>
+            StatusReply.Success(updatedCart.toSummary)
+          }
+    case AdjustItemQuantity(itemId, quantity, replyTo) =>
+      if (!state.hasItem(itemId))
+        Effect.reply(replyTo)(
+          StatusReply.Error(
+            s"Item '$itemId' doesn't exists in this shopping cart"))
+      else if (quantity <= 0)
+        Effect.reply(replyTo)(
+          StatusReply.Error("Quantity must be greater than zero"))
+      else
+        Effect
+          .persist(
+            ItemQuantityAdjusted(
+              cartId = cartId,
+              itemId = itemId,
+              quantity = quantity))
+          .thenReply(replyTo) { updatedCart =>
+            StatusReply.Success(updatedCart.toSummary)
+          }
+    case Get(replayTo) =>
+      Effect.reply(replayTo)(state.toSummary)
   }
 
   private def handleEvent(state: State, event: Event): State =
     event match {
       case ItemAdded(_, itemId, quantity) => state.updateItem(itemId, quantity)
+      case CheckedOut(_, eventTime)       => state.checkout(eventTime)
+      case ItemRemoved(_, itemId)         => state.removeItem(itemId)
+      case ItemQuantityAdjusted(_, itemId, quantity) =>
+        state.adjustQuantity(itemId, quantity)
     }
 
   val EntityKey: EntityTypeKey[Command] = EntityTypeKey[Command]("ShoppingCart")

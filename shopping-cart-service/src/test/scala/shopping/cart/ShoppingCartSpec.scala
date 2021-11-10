@@ -42,5 +42,56 @@ class ShoppingCartSpec
         eventSourcedTestKit.runCommand(ShoppingCart.AddItem("foo", 13, _))
       result2.reply.isError shouldBe true
     }
+
+    "checkout" in {
+      val result1 =
+        eventSourcedTestKit.runCommand(ShoppingCart.AddItem("foo", 42, _))
+      result1.reply.isSuccess shouldBe true
+      val result2 =
+        eventSourcedTestKit.runCommand(ShoppingCart.Checkout)
+      result2.reply shouldBe StatusReply.Success(
+        ShoppingCart.Summary(Map("foo" -> 42), checkedOut = true))
+      val result3 =
+        eventSourcedTestKit.runCommand(ShoppingCart.AddItem("bar", 13, _))
+      result3.reply.isError shouldBe true
+    }
+
+    "get" in {
+      val result1 =
+        eventSourcedTestKit.runCommand(ShoppingCart.AddItem("foo", 42, _))
+      result1.reply.isSuccess shouldBe true
+      val result2 =
+        eventSourcedTestKit.runCommand(ShoppingCart.Get)
+      result2.reply shouldBe ShoppingCart.Summary(
+        Map("foo" -> 42),
+        checkedOut = false)
+    }
+
+    "remove item" in {
+      val result1 =
+        eventSourcedTestKit.runCommand(ShoppingCart.AddItem("foo", 42, _))
+      val result2 =
+        eventSourcedTestKit.runCommand(ShoppingCart.AddItem("bar", 42, _))
+      val result3 =
+        eventSourcedTestKit.runCommand(ShoppingCart.RemoveItem("bar", _))
+      val result4 =
+        eventSourcedTestKit.runCommand(ShoppingCart.Get)
+      result4.reply shouldBe ShoppingCart.Summary(
+        Map("foo" -> 42),
+        checkedOut = false)
+    }
+
+    "adjust item quantity" in {
+      val result1 =
+        eventSourcedTestKit.runCommand(ShoppingCart.AddItem("foo", 42, _))
+      val result2 =
+        eventSourcedTestKit.runCommand(
+          ShoppingCart.AdjustItemQuantity("foo", 21, _))
+      val result3 =
+        eventSourcedTestKit.runCommand(ShoppingCart.Get)
+      result3.reply shouldBe ShoppingCart.Summary(
+        Map("foo" -> 21),
+        checkedOut = false)
+    }
   }
 }
