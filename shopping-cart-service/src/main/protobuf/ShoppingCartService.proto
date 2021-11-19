@@ -13,6 +13,7 @@ service ShoppingCartService {
   rpc GetCart (GetCartRequest) returns (Cart) {}
   rpc RemoveItem (RemoveItemRequest) returns (Cart) {}
   rpc AdjustItemQuantity (AdjustItemQuantityRequest) returns (Cart) {}
+  rpc GetItemPopularity(GetItemPopularityRequest) returns (GetItemPopularityResponse) {}
 }
 
 message AddItemRequest {
@@ -48,4 +49,13 @@ message Cart {
 message Item {
   string itemId = 1;
   int32 quantity = 2;
+}
+
+message GetItemPopularityRequest {
+  string itemId = 1;
+}
+
+message GetItemPopularityResponse {
+  string itemId = 1;
+  int64 popularityCount = 2;
 }
